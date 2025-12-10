@@ -2,95 +2,80 @@ import os
 import hashlib
 import pickle
 
+SNAPSHOT_DIR = ".vcs_storage"
+
+
 def init_vcs():
-    os.makedirs('.vcs_storage', exist_ok=True)
+    os.makedirs(SNAPSHOT_DIR, exist_ok=True)
     print("VCS initialized.")
+
 
 def snapshot(directory):
     snapshot_hash = hashlib.sha256()
-    snapshot_data = {'files' : {}}
+    snapshot_data = {"files": {}}
 
     for root, dirs, files in os.walk(directory):
-        for file in files:
-            if '.vcs_storage' in os.path.join(root, file):
-                continue
+        dirs[:] = [d for d in dirs if d not in (".git", SNAPSHOT_DIR.lstrip("./"))]
 
+        for file in files:
             file_path = os.path.join(root, file)
 
-            with open(file_path, 'rb') as f:
+            if os.path.abspath(file_path) == os.path.abspath(__file__):
+                continue
+
+            with open(file_path, "rb") as f:
                 content = f.read()
-                snapshot_hash.update(content)
-                snapshot_data['files']['file_path'] = content
+
+            snapshot_hash.update(content)
+            rel_path = os.path.relpath(file_path, directory)
+            snapshot_data["files"][rel_path] = content
 
     hash_digest = snapshot_hash.hexdigest()
-    snapshot_data['file_list'] = list(snapshot_data['files'].keys())
+    snapshot_data["file_list"] = list(snapshot_data["files"].keys())
 
-    with open(f'.vcs_storage/{hash_digest}', 'wb') as f:
+    snapshot_path = os.path.join(SNAPSHOT_DIR, hash_digest)
+    with open(snapshot_path, "wb") as f:
         pickle.dump(snapshot_data, f)
 
-    print(f'Snapchot created with hash {hash_digest}')
+    print(f"Snapchot created with hash {hash_digest}")
+
+
 
 def revert_to_snapshot(snapshot_id):
-    path = f".vcsstorage/{snapshot_id}.snapshot"
+    snapshot_path = os.path.join(SNAPSHOT_DIR, snapshot_id)
 
-    if not os.path.exists(path):
+    if not os.path.exists(snapshot_path):
         print("Snapshot not found.")
         return
 
-    with open(path, "rb") as f:
+    with open(snapshot_path, "rb") as f:
         snapshot_data = pickle.load(f)
 
-    # Now restore the files
-    for filename, content in snapshot_data.items():
-        with open(filename, "wb") as file:
+    files_dict = snapshot_data.get("files", {})
+
+    for rel_path, content in files_dict.items():
+        if rel_path == ".git" or rel_path.startswith(".git/") or "/.git/" in rel_path:
+            continue
+
+        full_path = os.path.join(".", rel_path)
+        os.makedirs(os.path.dirname(full_path) or ".", exist_ok=True)
+
+        with open(full_path, "wb") as file:
             file.write(content)
 
     print(f"Reverted to snapshot {snapshot_id}.")
 
-    snapshot_path = f'.vcs_storage/{hash_digest}'
-    if not os.path.exists(snapshot_path):
-        print('Snapshot does not exist.')
-
-    with open(snapshot_path, 'rb') as f:
-        snapshot_data = pickle.loads(f)
-
-    for file_path, content in snapshot_data['files'].items():
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, 'wb') as f:
-            f.write(content)
 
 
-    current_files = set()
-    for root, dirs, files in os.walk('.', topdown=True):
-        if '.vcs_storage' in root:
-            continue
-        for file in files:
-            current_files.add(os.path.join(root, file))
-
-
-    snapshot_files = set(snapshot_data['file_list'])
-    files_to_delete = current_files - snapshot_files
-
-    for file_path in files_to_delete:
-        os.remove(file_path)
-        print(f'Remove {file_path}')
-
-    print(f'Reverted to snapshot {hash_digest}')
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
     command = sys.argv[1]
 
-    if command == 'init':
+    if command == "init":
         init_vcs()
-
-    elif command == 'snapshot':
-        snapshot('.')
-    elif command == 'revert':
+    elif command == "snapshot":
+        snapshot(".")
+    elif command == "revert":
         revert_to_snapshot(sys.argv[2])
     else:
-        print('Unknown command!')
-
-
-    
+        print("Unknown command!")
